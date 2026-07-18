@@ -6,7 +6,7 @@ use crate::{
 };
 
 #[draad::ty]
-#[derive(sqlx::Type, PartialEq)]
+#[derive(sqlx::Type, PartialEq, Copy)]
 #[sqlx(type_name = "download_status", rename_all = "lowercase")]
 pub enum DownloadStatus {
     Queued,
@@ -19,16 +19,16 @@ pub enum DownloadStatus {
 
 #[draad::ty]
 pub struct SimpleDownload {
-    id: i32,
-    info_hash: String,
-    file_idx: i32,
-    name: Option<String>,
-    total_bytes: Option<i64>,
-    downloaded_bytes: i64,
-    status: DownloadStatus,
-    error: Option<String>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub id: i32,
+    pub info_hash: String,
+    pub file_idx: i32,
+    pub name: Option<String>,
+    pub total_bytes: Option<i64>,
+    pub downloaded_bytes: i64,
+    pub status: DownloadStatus,
+    pub error: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[draad::ty]

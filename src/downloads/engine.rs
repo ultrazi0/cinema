@@ -59,6 +59,13 @@ pub struct Chapter {
     pub title: String,
 }
 
+pub struct TorrentFileInfo {
+    pub file_idx: usize,
+    pub name: String,
+    pub components: Vec<String>,
+    pub size_bytes: u64,
+}
+
 /// A (relatively) thick wrapper around [`librqbit::Session`].
 /// Only read-only operations are publically available (such as reading the stats),
 /// everything else should go through the [download manager](`crate::downloads::Handle`)
@@ -579,6 +586,44 @@ impl TorrentEngine {
         Ok(path)
     }
 
+    /// Add the torrent to the session (if needed), wait for metadata, and
+    /// return the video files inside it without downloading any data.
+    /// `ensure_torrent` adds with an empty `only_files`, so metadata is
+    /// fetched but no pieces are requested. Non-episode files (subtitles,
+    /// nfo, cover art, sample clips) are filtered out. `file_idx` on the
+    /// returned entries preserves the file's position in the original
+    /// torrent so `ensure_download` still targets the right file.
+    pub async fn list_files(
+        &self,
+        info_hash: &str,
+        config: &Config,
+    ) -> crate::app::Result<Vec<TorrentFileInfo>> {
+        self.ensure_torrent(info_hash, config).await?;
+
+        let id = TorrentIdOrHash::parse(info_hash)
+            .map_err(|e| crate::app::CinemaError::Generic(format!("Invalid info hash: {e}")))?;
+
+        let details = self.api.api_torrent_details(id).map_err(|e| {
+            crate::app::CinemaError::Generic(format!("Failed to get torrent details: {e}"))
+        })?;
+
+        let files = details
+            .files
+            .ok_or_else(|| crate::app::CinemaError::Generic("No file metadata available".into()))?;
+
+        Ok(files
+            .into_iter()
+            .enumerate()
+            .filter(|(_, f)| is_episode_file(&f.name, &f.components))
+            .map(|(idx, f)| TorrentFileInfo {
+                file_idx: idx,
+                name: f.name,
+                components: f.components,
+                size_bytes: f.length,
+            })
+            .collect())
+    }
+
     /// Get the number of audio tracks in a file using ffprobe. `input` is an
     /// ffprobe input: either an on-disk path or, for a still-downloading
     /// torrent, the local HTTP stream URL so ffprobe reads through the blocking,
@@ -979,4 +1024,41 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{:.0} MB", bytes as f64 / MB as f64)
     }
+}
+
+/// Video extensions we treat as episode files. Everything else in a
+/// torrent (subtitles, nfo, cover art, subs folders) is filtered out.
+const VIDEO_EXTENSIONS: &[&str] = &[
+    "mkv", "mp4", "avi", "mov", "webm", "m4v", "wmv", "flv", "mpg", "mpeg", "ts", "m2ts",
+];
+
+/// Whether a torrent file looks like a real episode video. Filters by
+/// extension and drops obvious sample/trailer clips.
+fn is_episode_file(name: &str, components: &[String]) -> bool {
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    let Some(ext) = ext else {
+        return false;
+    };
+    if !VIDEO_EXTENSIONS.iter().any(|v| *v == ext) {
+        return false;
+    }
+
+    // "sample" often shows up as a filename (sample.mkv) or a directory
+    // (Sample/movie.mkv). Match the token case-insensitively against any
+    // path segment, not raw `contains`, so "sample" doesn't match
+    // "samples-of-something.mkv", but does match "Sample.mkv" or a
+    // "Samples" directory.
+    for component in components {
+        let stem = std::path::Path::new(component)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(component);
+        if stem.eq_ignore_ascii_case("sample") || stem.eq_ignore_ascii_case("samples") {
+            return false;
+        }
+    }
+    true
 }

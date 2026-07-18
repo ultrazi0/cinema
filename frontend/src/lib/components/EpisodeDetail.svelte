@@ -13,6 +13,7 @@
 		onselectepisode,
 		onplay,
 		ondownload,
+		ondownloadseason,
 	}: {
 		season: Season;
 		episode: Episode;
@@ -23,6 +24,7 @@
 		onselectepisode: (season: number, episode: number) => void;
 		onplay?: () => void;
 		ondownload?: (season: number, episode: number) => void;
+		ondownloadseason?: (season: number) => void;
 	} = $props();
 
 	const canResume = $derived(
@@ -46,7 +48,16 @@
 </script>
 
 <div class="episode-strip">
-	<Text size="sm" weight="semibold">{season.name}</Text>
+	<div class="season-header">
+		<Text size="sm" weight="semibold">{season.name}</Text>
+		{#if ondownloadseason}
+			<Button
+				variant="ghost"
+				icon="Download"
+				onclick={() => ondownloadseason?.(season.season_number)}
+			>Season</Button>
+		{/if}
+	</div>
 	<div class="episode-list">
 		{#each season.episodes as ep}
 			<button
@@ -133,6 +144,13 @@
 		flex-direction: column;
 		gap: 0.5rem;
 		overflow-y: auto;
+	}
+
+	.season-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
 	}
 
 	.episode-list {

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::app::{AppContext, CinemaError};
 use crate::downloads::TorrentEngine;
 use crate::streams::Stream;
@@ -55,6 +57,17 @@ pub struct PiecesUpdate {
     pub pieces: Vec<u8>,
 }
 
+/// One entry in the file listing of a torrent, produced by loading its
+/// metadata via librqbit without downloading any pieces.
+#[draad::ty]
+pub struct TorrentFileEntry {
+    pub file_idx: i32,
+    pub name: String,
+    pub full_path: String,
+    pub size_bytes: u64,
+    pub download_status: Option<crate::downloads::types::DownloadStatus>,
+}
+
 #[draad::api(namespace = "streams")]
 pub trait StreamsApi {
     /// Aggregates available torrent streams for a movie.
@@ -64,6 +77,20 @@ pub trait StreamsApi {
     /// Aggregates available torrent streams for a specific TV episode.
     #[get]
     async fn tv(&self, id: i64, season: u32, episode: u32) -> Result<Vec<Stream>, CinemaError>;
+
+    /// Season-pack candidates for a whole TV season. Runs the aggregator
+    /// against the first and last episode of the season and returns only the
+    /// torrents present in both - a heuristic that filters out
+    /// single-episode torrents. See `SeasonDownloadModal` on the frontend.
+    #[get]
+    async fn tv_season(&self, id: i64, season: u32) -> Result<Vec<Stream>, CinemaError>;
+
+    /// Lists the files in a torrent by loading its metadata via librqbit,
+    /// no data is downloaded. Each entry is annotated with whether a
+    /// `downloads` row already exists for it. Used to populate the bulk
+    /// enqueue checklist.
+    #[get]
+    async fn torrent_files(&self, info_hash: String) -> Result<Vec<TorrentFileEntry>, CinemaError>;
 
     /// Starts a torrent (idempotent) and returns the playback URL.
     /// Always creates/updates a `downloads` row so the DB reflects the
@@ -209,6 +236,83 @@ impl StreamsApi for AppContext {
         .await;
 
         Ok(streams)
+    }
+
+    async fn tv_season(&self, id: i64, season: u32) -> Result<Vec<Stream>, CinemaError> {
+        let tmdb = TmdbClient::new(&self.config, self.http.clone());
+        let item = tmdb.details(MediaType::Tv, id, &self.db).await?;
+        let imdb_id = item
+            .imdb_id
+            .ok_or_else(|| CinemaError::Generic("No IMDB ID found for this show".into()))?;
+
+        let episode_count = item
+            .seasons
+            .as_ref()
+            .and_then(|seasons| {
+                seasons
+                    .iter()
+                    .find(|s| s.season_number == season as i64)
+                    .map(|s| s.episode_count)
+            })
+            .unwrap_or(0);
+
+        let first = streams_mod::AggregationMediaType::Tv {
+            tmdb_id: id,
+            imdb_id: imdb_id.clone(),
+            season,
+            episode: 1,
+        }
+        .aggregate(self);
+
+        if episode_count <= 1 {
+            return Ok(first.await);
+        }
+
+        let last = streams_mod::AggregationMediaType::Tv {
+            tmdb_id: id,
+            imdb_id,
+            season,
+            episode: episode_count as u32,
+        }
+        .aggregate(self);
+
+        let (first_streams, last_streams) = tokio::join!(first, last);
+
+        let last_hashes: HashSet<String> = last_streams.into_iter().map(|s| s.info_hash).collect();
+
+        Ok(first_streams
+            .into_iter()
+            .filter(|s| last_hashes.contains(&s.info_hash))
+            .collect())
+    }
+
+    async fn torrent_files(&self, info_hash: String) -> Result<Vec<TorrentFileEntry>, CinemaError> {
+        let engine = TorrentEngine::get();
+        let files = engine.list_files(&info_hash, &self.config).await?;
+
+        let keys: Vec<(&str, i32)> = files
+            .iter()
+            .map(|f| (info_hash.as_str(), f.file_idx as i32))
+            .collect();
+        let enqueued =
+            crate::downloads::types::SimpleDownload::find_by_info_hash_and_file_idx(&self.db, keys)
+                .await?;
+
+        Ok(files
+            .into_iter()
+            .map(|f| {
+                let download_status = enqueued
+                    .get(&(info_hash.clone(), f.file_idx as i32))
+                    .map(|download| download.status);
+                TorrentFileEntry {
+                    file_idx: f.file_idx as i32,
+                    name: f.name,
+                    full_path: f.components.join("/"),
+                    size_bytes: f.size_bytes,
+                    download_status,
+                }
+            })
+            .collect())
     }
 
     async fn start(&self, info_hash: String, file_idx: i32) -> Result<StartStream, CinemaError> {

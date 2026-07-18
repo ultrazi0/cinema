@@ -11,6 +11,11 @@ pub struct EnqueueDownload {
 }
 
 #[draad::ty]
+pub struct EnqueueBulkDownload {
+    pub items: Vec<EnqueueDownload>,
+}
+
+#[draad::ty]
 pub struct ResolutionEstimate {
     pub resolution: String,
     pub size_bytes: Option<u64>,
@@ -33,6 +38,11 @@ pub trait DownloadsApi {
     /// Queue a new download. If `info_hash`/`file_idx` are omitted, picks the
     /// best stream matching the requested resolution. Returns the download id
     async fn enqueue(&self, request: EnqueueDownload) -> Result<i32, CinemaError>;
+
+    /// Queue multiple downloads at once. Each item is handled independently
+    /// via `ensure_download`; a failure on one item does not roll back the
+    /// others. Returns the download.
+    async fn enqueue_bulk(&self, request: EnqueueBulkDownload) -> Result<Vec<i32>, CinemaError>;
 
     /// Temporarily pause. Files stay on disk; resume picks up where it left off.
     #[delete]
@@ -75,6 +85,32 @@ impl DownloadsApi for AppContext {
             .await?;
 
         Ok(id)
+    }
+
+    async fn enqueue_bulk(&self, body: EnqueueBulkDownload) -> Result<Vec<i32>, CinemaError> {
+        let mut ids = Vec::with_capacity(body.items.len());
+        for item in body.items {
+            let res = self
+                .downloads
+                .ensure_download(
+                    &item.info_hash,
+                    item.file_idx,
+                    crate::downloads::DownloadPriority::Background,
+                )
+                .await;
+            match res {
+                Ok((id, _)) => ids.push(id),
+                Err(err) => {
+                    tracing::error!(
+                        ?err,
+                        info_hash = &item.info_hash,
+                        item.file_idx,
+                        "Enqueueing failed"
+                    );
+                }
+            };
+        }
+        Ok(ids)
     }
 
     async fn pause(&self, id: i32) -> Result<(), CinemaError> {

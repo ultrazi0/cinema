@@ -2,6 +2,7 @@
 	import type { MediaType, Stream } from "$lib/schema";
 	import { api } from "$lib/api";
 	import { Button, Icon, Modal, Spinner, Text, toast, tooltip } from "glow";
+	import { canEnqueueDownload } from "$lib/utils";
 
 	let {
 		open = $bindable(false),
@@ -80,14 +81,6 @@
 		};
 	});
 
-	const RETRIABLE_STATUSES = new Set(["Failed", "Cancelled"]);
-
-	function canEnqueue(stream: Stream): boolean {
-		return (
-			stream.download == null || RETRIABLE_STATUSES.has(stream.download.status)
-		);
-	}
-
 	async function enqueue(stream: Stream) {
 		const key = `${stream.info_hash}:${stream.file_idx}`;
 		if (enqueueing === key) return;
@@ -163,7 +156,7 @@
 												</Text>
 											{/if}
 										</div>
-										{#if canEnqueue(stream)}
+										{#if canEnqueueDownload(stream.download?.status)}
 											<Button
 												variant="ghost"
 												icon="Download"

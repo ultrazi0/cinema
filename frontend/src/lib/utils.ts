@@ -38,6 +38,14 @@ export const DOWNLOAD_STATUS_LABEL: Record<DownloadStatus, string> = {
 	Cancelled: "Cancelled",
 };
 
+const RETRIABLE_DOWNLOAD_STATUSES = new Set<DownloadStatus>(["Failed", "Cancelled"]);
+
+export function canEnqueueDownload(status: DownloadStatus | null | undefined): boolean {
+	return (
+		status == null || RETRIABLE_DOWNLOAD_STATUSES.has(status)
+	);
+}
+
 export const PRETRANSCODING_STATUS_LABEL: Record<PretranscodingStatus, string> = {
 	Queued: "Queued",
 	Transcoding: "Transcoding",
