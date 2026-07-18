@@ -184,6 +184,13 @@ async fn run() -> Result<()> {
         events,
     ));
 
+    // Reap torrents the librqbit session no longer needs: metadata-only
+    // orphans from `list_files` and torrents whose every `downloads` row
+    // is in a terminal state (Completed/Cancelled/Failed).
+    tokio::spawn(crate::downloads::TorrentEngine::torrent_reaper(
+        ctx.db.clone(),
+    ));
+
     // Build router
     let mut router = Router::new();
 

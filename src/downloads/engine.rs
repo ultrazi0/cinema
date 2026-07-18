@@ -178,6 +178,93 @@ impl TorrentEngine {
         ENGINE.get().expect("TorrentEngine not initialized")
     }
 
+    /// Periodically prune the librqbit session:
+    /// - `stop` every file whose `downloads` row is in a terminal state
+    /// - drop metadata-only orphans added by `list_files` (empty
+    ///   `only_files`, no `downloads` row at all).
+    pub async fn torrent_reaper(db: crate::app::Pool) {
+        let mut interval = tokio::time::interval(std::time::Duration::from_mins(5));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        let engine = Self::get();
+        loop {
+            interval.tick().await;
+
+            // (info_hash, only_files_empty) for every torrent in the session.
+            let session_state: Vec<(String, bool)> = engine.session.with_torrents(|iter| {
+                iter.map(|(_, h)| {
+                    let only_files_empty = h.only_files().as_deref() == Some(&[]);
+                    (h.info_hash().as_string(), only_files_empty)
+                })
+                .collect()
+            });
+
+            if session_state.is_empty() {
+                continue;
+            }
+
+            let info_hashes: Vec<&str> = session_state.iter().map(|(h, _)| h.as_str()).collect();
+            let rows = match sqlx::query!(
+                r#"
+                    SELECT
+                        info_hash,
+                        file_idx,
+                        (status IN ('completed', 'cancelled', 'failed')) AS "is_terminal!"
+                    FROM downloads
+                    WHERE info_hash = ANY($1::text[])
+                "#,
+                &info_hashes as &[&str]
+            )
+            .fetch_all(&db)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(err) => {
+                    tracing::warn!(?err, "Torrent reaper: DB lookup failed");
+                    continue;
+                }
+            };
+
+            let mut terminal_by_hash: HashMap<String, Vec<usize>> = HashMap::new();
+            let mut hashes_with_row: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for r in rows {
+                hashes_with_row.insert(r.info_hash.clone());
+                if r.is_terminal {
+                    terminal_by_hash
+                        .entry(r.info_hash)
+                        .or_default()
+                        .push(r.file_idx as usize);
+                }
+            }
+
+            for (info_hash, only_files_empty) in session_state {
+                if let Some(file_idxs) = terminal_by_hash.get(&info_hash) {
+                    for &file_idx in file_idxs {
+                        let key = EngineKey {
+                            info_hash: info_hash.clone(),
+                            file_idx,
+                        };
+                        if let Err(err) = engine.stop(&key).await {
+                            tracing::warn!(
+                                ?err,
+                                info_hash,
+                                file_idx,
+                                "Torrent reaper: stop failed"
+                            );
+                        }
+                    }
+                } else if only_files_empty && !hashes_with_row.contains(&info_hash) {
+                    // No downloads row at all and nothing selected:
+                    // metadata-only orphan from `list_files`.
+                    if let Err(err) = engine.stop_torrent(&info_hash, false).await {
+                        tracing::warn!(?err, info_hash, "Torrent reaper: delete failed");
+                    }
+                }
+            }
+        }
+    }
+
     /// Try to fetch the .torrent file from cache services.
     /// Returns the raw bytes if found, None otherwise.
     async fn fetch_torrent_file(&self, info_hash: &str) -> Option<bytes::Bytes> {
