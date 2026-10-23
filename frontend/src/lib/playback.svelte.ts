@@ -309,6 +309,9 @@ export class PlaybackSession {
 		const stream = this.ctx.currentStream();
 		if (!stream) return;
 		this.activeAudioIdx = idx;
+
+		this.transcoding.onlyAudio = true;
+		this.transcoding.enabled = true;
 		await this.#startHlsRemux(
 			stream.info_hash,
 			stream.file_idx,
