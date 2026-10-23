@@ -1,3 +1,5 @@
+#![allow(clippy::double_must_use)] // TODO: actually fix this lint (it's in draad, though)
+
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
