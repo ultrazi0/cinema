@@ -38,7 +38,7 @@ pub(crate) async fn transcode(
             "-c:a",
             "aac",
             "-b:a",
-            "192k",
+            "256k",
             "-ac",
             "2",
             "-af",
