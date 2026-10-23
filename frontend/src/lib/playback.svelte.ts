@@ -376,7 +376,7 @@ export class PlaybackSession {
 				hash,
 				idx,
 				audioIdx,
-				startAt,
+				Math.max(startAt - 30, 0),
 				onlyAudio,
 			);
 			// The remux call blocks until the first segment exists; the user
