@@ -3,10 +3,13 @@
 	import type { Chapter, Stream } from "$lib/schema";
 	import { Button, PopoverMenu, type PopoverMenuEntry } from "glow";
 	import { formatTime, type AudioTrack, type SubtitleTrack } from "$lib/utils";
-	import { createAudioSubtitleMenu, createScrub, createStreamMenu } from "$lib/playerMenus.svelte";
+	import {
+		createAudioSubtitleMenu,
+		createScrub,
+		createStreamMenu,
+	} from "$lib/playerMenus.svelte";
 	import PieceMap from "./PieceMap.svelte";
 
-	
 	let {
 		currentTime,
 		duration,
@@ -273,9 +276,7 @@
 					{ kind: "header" as const, label: "Torrent" },
 					{
 						kind: "item" as const,
-						label: magnetCopied
-							? "Copied!"
-							: "Copy magnet link",
+						label: magnetCopied ? "Copied!" : "Copy magnet link",
 						onclick: copyMagnet,
 					},
 				]
@@ -340,8 +341,14 @@
 					</div>
 				{/each}
 			{:else}
-				<div class="progress-buffered" style="width: {scrub.bufferedPercent}%"></div>
-				<div class="progress-fill" style="width: {scrub.progressPercent}%"></div>
+				<div
+					class="progress-buffered"
+					style="width: {scrub.bufferedPercent}%"
+				></div>
+				<div
+					class="progress-fill"
+					style="width: {scrub.progressPercent}%"
+				></div>
 			{/if}
 			<div class="progress-thumb" style="left: {scrub.progressPercent}%"></div>
 		</div>

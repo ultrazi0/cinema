@@ -3,12 +3,15 @@
 	import type { Stream } from "$lib/schema";
 	import { Button, Popover, PopoverMenu, RangeInput } from "glow";
 	import { formatTime, type AudioTrack, type SubtitleTrack } from "$lib/utils";
-	import { createAudioSubtitleMenu, createScrub, createStreamMenu } from "$lib/playerMenus.svelte";
+	import {
+		createAudioSubtitleMenu,
+		createScrub,
+		createStreamMenu,
+	} from "$lib/playerMenus.svelte";
 	import PieceMap from "./PieceMap.svelte";
 
 	const SEEK_STEP = 10;
 
-	
 	let {
 		paused = true,
 		loading = false,
@@ -77,16 +80,12 @@
 		duration: () => duration,
 		currentTime: () => currentTime,
 		buffered: () => buffered,
-		
+
 		onSeek: () => onSeek,
 	});
 
 	const volumeIcon = $derived(
-		muted || volume === 0
-			? "VolumeX"
-			: volume < 0.5
-				? "Volume1"
-				: "Volume2",
+		muted || volume === 0 ? "VolumeX" : volume < 0.5 ? "Volume1" : "Volume2",
 	);
 
 	function seek(seconds: number) {
@@ -165,9 +164,18 @@
 				{#if pieceMap.length > 0 && streamStats && !streamStats.finished}
 					<PieceMap {pieceMap} />
 				{/if}
-				<div class="progress-buffered" style="width: {scrub.bufferedPercent}%"></div>
-				<div class="progress-fill" style="width: {scrub.progressPercent}%"></div>
-				<div class="progress-thumb" style="left: {scrub.progressPercent}%"></div>
+				<div
+					class="progress-buffered"
+					style="width: {scrub.bufferedPercent}%"
+				></div>
+				<div
+					class="progress-fill"
+					style="width: {scrub.progressPercent}%"
+				></div>
+				<div
+					class="progress-thumb"
+					style="left: {scrub.progressPercent}%"
+				></div>
 			</div>
 		</div>
 		<span class="time">{formatTime(duration)}</span>
@@ -180,13 +188,13 @@
 			{/snippet}
 			{#snippet children()}
 				<RangeInput
-						min={0}
-						max={1}
-						step={0.01}
-						value={muted ? 0 : volume}
-						showValue={false}
-						thumb="always"
-						onChange={onSetVolume}
+					min={0}
+					max={1}
+					step={0.01}
+					value={muted ? 0 : volume}
+					showValue={false}
+					thumb="always"
+					onChange={onSetVolume}
 				/>
 			{/snippet}
 		</Popover>
