@@ -2,19 +2,11 @@
 	import type { Snippet } from "svelte";
 	import type { Chapter, Stream } from "$lib/schema";
 	import { Button, PopoverMenu, type PopoverMenuEntry } from "glow";
-	import { DOWNLOAD_STATUS_LABEL } from "$lib/utils";
+	import { formatTime, type AudioTrack, type SubtitleTrack } from "$lib/utils";
+	import { createAudioSubtitleMenu, createScrub, createStreamMenu } from "$lib/playerMenus.svelte";
+	import PieceMap from "./PieceMap.svelte";
 
-	interface AudioTrack {
-		id: number;
-		name: string;
-		lang?: string;
-	}
-	interface SubtitleTrack {
-		id: string;
-		language: string;
-		url: string;
-	}
-
+	
 	let {
 		currentTime,
 		duration,
@@ -105,17 +97,13 @@
 		rightExtra?: Snippet;
 	} = $props();
 
-	let trackEl = $state<HTMLDivElement | undefined>(undefined);
-	let scrubbing = $state(false);
-	let scrubValue = $state(0);
-
-	const displayTime = $derived(scrubbing ? scrubValue : currentTime);
-	const progressPercent = $derived(
-		duration > 0 ? (displayTime / duration) * 100 : 0,
-	);
-	const bufferedPercent = $derived(
-		duration > 0 ? (buffered / duration) * 100 : 0,
-	);
+	const scrub = createScrub({
+		duration: () => duration,
+		currentTime: () => currentTime,
+		buffered: () => buffered,
+		onScrub: () => onScrub,
+		onSeek: () => onSeek,
+	});
 
 	// Only show chapters when there's more than one and we know the duration.
 	const showChapters = $derived(chapters.length > 1 && duration > 0);
@@ -138,7 +126,7 @@
 		);
 	}
 
-	const currentChapter = $derived(chapterAt(displayTime));
+	const currentChapter = $derived(chapterAt(scrub.displayTime));
 
 	// Hover state for the chapter tooltip while pointing along the track.
 	let hovering = $state(false);
@@ -148,208 +136,37 @@
 	);
 	const hoverChapter = $derived(chapterAt(hoverTime));
 
-	function formatTime(seconds: number): string {
-		if (!isFinite(seconds) || seconds < 0) return "0:00";
-		const h = Math.floor(seconds / 3600);
-		const m = Math.floor((seconds % 3600) / 60);
-		const s = Math.floor(seconds % 60);
-		if (h > 0)
-			return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-		return `${m}:${s.toString().padStart(2, "0")}`;
-	}
-
-	function posFromEvent(clientX: number): number | null {
-		if (!trackEl || !duration) return null;
-		const rect = trackEl.getBoundingClientRect();
-		const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-		return pct * duration;
-	}
-	function onPointerDown(e: PointerEvent & { currentTarget: HTMLDivElement }) {
-		const t = posFromEvent(e.clientX);
-		if (t == null) return;
-		scrubbing = true;
-		scrubValue = t;
-		onScrub?.(t);
-		e.currentTarget.setPointerCapture(e.pointerId);
-	}
 	function onPointerMove(e: PointerEvent) {
-		const t = posFromEvent(e.clientX);
+		const t = scrub.onPointerMove(e);
 		if (t == null) return;
 		hovering = true;
 		hoverTime = t;
-		if (!scrubbing) return;
-		scrubValue = t;
-		onScrub?.(t);
 	}
 	function onPointerLeave() {
-		if (!scrubbing) hovering = false;
-	}
-	function onPointerUp(e: PointerEvent) {
-		if (!scrubbing) return;
-		const t = posFromEvent(e.clientX) ?? scrubValue;
-		scrubbing = false;
-		onSeek(t);
+		if (!scrub.scrubbing) hovering = false;
 	}
 
-	const activeResolution = $derived(
-		streams.find((s) => s.info_hash === activeStreamHash)?.resolution ?? null,
-	);
-
-	const resolutions = $derived.by(() => {
-		const seen = new Set<string>();
-		const result: string[] = [];
-		for (const s of streams) {
-			const res = s.resolution;
-			if (res && !seen.has(res)) {
-				seen.add(res);
-				result.push(res);
-			}
-		}
-		const order: Record<string, number> = {
-			"4K": 4,
-			"2160p": 4,
-			"1080p": 3,
-			"720p": 2,
-			"480p": 1,
-		};
-		return result.sort((a, b) => (order[b] ?? 0) - (order[a] ?? 0));
+	const streamMenu = createStreamMenu({
+		streams: () => streams,
+		activeStreamHash: () => activeStreamHash,
+		transcoding: () => transcoding,
+		hasAudioPretranscoding: () => hasAudioPretranscoding,
+		hasFullPretranscoding: () => hasFullPretranscoding,
+		onStreamSelect: () => onStreamSelect,
+		onTranscodingChange: () => onTranscodingChange,
 	});
 
-	const TRANSCODE_OPTIONS = $derived([
-		{ value: "none", label: "None", icon: "Ban" as const },
-		{
-			value: "audio",
-			label: "Audio",
-			icon: hasAudioPretranscoding
-				? { name: "AudioLines" as const, color: "var(--glow-color-success)" }
-				: ("AudioLines" as const),
-		},
-		{
-			value: "both",
-			label: "Audio + video",
-			icon: hasFullPretranscoding
-				? { name: "Film" as const, color: "var(--glow-color-success)" }
-				: ("Film" as const),
-		},
-	]);
-
-	const transcodingMode = $derived(
-		!transcoding.enabled ? "none" : transcoding.onlyAudio ? "audio" : "both",
-	);
-
-	function setTranscodingMode(mode: string) {
-		const enabled = mode !== "none";
-		const onlyAudio = mode === "audio";
-		transcoding.enabled = enabled;
-		transcoding.onlyAudio = onlyAudio;
-		onTranscodingChange?.(enabled, onlyAudio);
-	}
-
-	const streamMenuItems = $derived<PopoverMenuEntry[]>([
-		...(resolutions.length > 1
-			? [
-					{ kind: "header" as const, label: "Quality" },
-					...resolutions.map((res) => ({
-						kind: "item" as const,
-						label: res,
-						selected: res === activeResolution,
-						onclick: () => {
-							const best = streams.find((s) => s.resolution === res);
-							if (best) onStreamSelect?.(best);
-						},
-					})),
-				]
-			: []),
-		{ kind: "header" as const, label: "Sources" },
-		...(activeResolution
-			? streams.filter((s) => s.resolution === activeResolution)
-			: streams
-		)
-			.slice(0, 8)
-			.map((stream) => ({
-				kind: "item" as const,
-				label: `${stream.source}`,
-				description: [
-					stream.codec,
-					stream.audio,
-					stream.source_type,
-					stream.download
-						? (DOWNLOAD_STATUS_LABEL[stream.download.status] ??
-							stream.download.status)
-						: null,
-				]
-					.filter(Boolean)
-					.join(" · "),
-				shortcut: stream.size_display ?? undefined,
-				selected: stream.info_hash === activeStreamHash,
-				onclick: () => onStreamSelect?.(stream),
-			})),
-		...(onTranscodingChange
-			? [
-					{ kind: "header" as const, label: "Transcoding" },
-					{
-						kind: "radio" as const,
-						options: TRANSCODE_OPTIONS,
-						value: transcodingMode,
-						iconOnly: true,
-						onChange: setTranscodingMode,
-					},
-				]
-			: []),
-	]);
-
-	const audioSubtitleMenuItems = $derived<PopoverMenuEntry[]>([
-		...(audioTracks.length > 1
-			? [
-					{ kind: "header" as const, label: "Audio" },
-					...audioTracks.map((track) => ({
-						kind: "item" as const,
-						label: track.name,
-						description: track.lang ?? undefined,
-						selected: track.id === activeAudioTrack,
-						onclick: () => onAudioSelect?.(track),
-					})),
-					"divider" as const,
-				]
-			: []),
-		...(subtitleTracks.length > 0
-			? [
-					{ kind: "header" as const, label: "Subtitles" },
-					{
-						kind: "item" as const,
-						label: "Off",
-						selected: !subtitlesActive,
-						onclick: () => onSubtitleOff?.(),
-					},
-					...subtitleTracks.map((track) => {
-						const isEmbedded = track.id.startsWith("embedded:");
-						const dupes = subtitleTracks.filter(
-							(t) =>
-								t.language === track.language &&
-								t.id.startsWith("embedded:") === isEmbedded,
-						);
-						const suffix =
-							dupes.length > 1 ? ` #${dupes.indexOf(track) + 1}` : "";
-						return {
-							kind: "item" as const,
-							label: `${track.language}${suffix}`,
-							description: isEmbedded ? "Embedded" : undefined,
-							selected: track.url === activeTrackUrl,
-							onclick: () => onSubtitleSelect?.(track),
-						};
-					}),
-					...(subtitlesActive && subtitleOffsetControl
-						? [
-								"divider" as const,
-								{
-									kind: "custom" as const,
-									render: subtitleOffsetControl,
-								},
-							]
-						: []),
-				]
-			: []),
-	]);
+	const audioSubtitleMenu = createAudioSubtitleMenu({
+		audioTracks: () => audioTracks,
+		activeAudioTrack: () => activeAudioTrack,
+		subtitleTracks: () => subtitleTracks,
+		subtitlesActive: () => subtitlesActive,
+		activeTrackUrl: () => activeTrackUrl,
+		subtitleOffsetControl: () => subtitleOffsetControl,
+		onAudioSelect: () => onAudioSelect,
+		onSubtitleSelect: () => onSubtitleSelect,
+		onSubtitleOff: () => onSubtitleOff,
+	});
 
 	// Resolve to an absolute URL a desktop player on the same network can reach.
 	function absoluteExternalUrl(): string {
@@ -488,10 +305,10 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="progress-container"
-		bind:this={trackEl}
-		onpointerdown={onPointerDown}
+		use:scrub.bindTrack
+		onpointerdown={scrub.onPointerDown}
 		onpointermove={onPointerMove}
-		onpointerup={onPointerUp}
+		onpointerup={scrub.onPointerUp}
 		onpointerleave={onPointerLeave}
 		role="slider"
 		aria-valuenow={currentTime}
@@ -501,11 +318,7 @@
 	>
 		<div class="progress-track" class:segmented={showChapters}>
 			{#if pieceMap.length > 0 && streamStats && !streamStats.finished}
-				<div class="progress-pieces">
-					{#each pieceMap as value}
-						<div class="piece" style="opacity: {value / 255}"></div>
-					{/each}
-				</div>
+				<PieceMap {pieceMap} />
 			{/if}
 			{#if showChapters}
 				{#each chapters as chapter}
@@ -521,16 +334,16 @@
 							></div>
 							<div
 								class="seg-fill"
-								style="width: {segFraction(chapter, displayTime) * 100}%"
+								style="width: {segFraction(chapter, scrub.displayTime) * 100}%"
 							></div>
 						</div>
 					</div>
 				{/each}
 			{:else}
-				<div class="progress-buffered" style="width: {bufferedPercent}%"></div>
-				<div class="progress-fill" style="width: {progressPercent}%"></div>
+				<div class="progress-buffered" style="width: {scrub.bufferedPercent}%"></div>
+				<div class="progress-fill" style="width: {scrub.progressPercent}%"></div>
 			{/if}
-			<div class="progress-thumb" style="left: {progressPercent}%"></div>
+			<div class="progress-thumb" style="left: {scrub.progressPercent}%"></div>
 		</div>
 		{#if showChapters && hovering && hoverChapter}
 			<div class="chapter-tooltip" style="left: {hoverPercent}%">
@@ -572,7 +385,7 @@
 			</div>
 
 			<span class="time">
-				{formatTime(displayTime)} / {formatTime(duration)}
+				{formatTime(scrub.displayTime)} / {formatTime(duration)}
 			</span>
 		</div>
 
@@ -592,7 +405,7 @@
 			{/if}
 
 			{#if streams.length > 0 && onStreamSelect}
-				<PopoverMenu items={streamMenuItems} align="right">
+				<PopoverMenu items={streamMenu.items} align="right">
 					{#snippet trigger()}
 						<Button variant="ghost" icon="Settings2" />
 					{/snippet}
@@ -600,7 +413,7 @@
 			{/if}
 
 			{#if audioTracks.length > 1 || subtitleTracks.length > 0}
-				<PopoverMenu items={audioSubtitleMenuItems} align="right">
+				<PopoverMenu items={audioSubtitleMenu.items} align="right">
 					{#snippet trigger()}
 						<Button
 							variant="ghost"
@@ -705,23 +518,6 @@
 	.seg-fill {
 		background: var(--accent);
 		transition: width 0.05s linear;
-	}
-
-	.progress-pieces {
-		position: absolute;
-		top: 0;
-		left: 0;
-		width: 100%;
-		height: 100%;
-		display: flex;
-		border-radius: 2px;
-		overflow: hidden;
-	}
-
-	.progress-pieces .piece {
-		flex: 1;
-		background: rgba(255, 255, 255, 0.25);
-		transition: opacity 2s ease;
 	}
 
 	.progress-buffered {

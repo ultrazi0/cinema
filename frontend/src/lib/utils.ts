@@ -73,3 +73,47 @@ export function rgbToHex(rgb: string, scale = 1): string {
 	const hex = (n: number) => n.toString(16).padStart(2, "0");
 	return `#${hex(r)}${hex(g)}${hex(b)}`;
 }
+
+export interface AudioTrack {
+	id: number;
+	name: string;
+	lang?: string;
+}
+
+export interface SubtitleTrack {
+	id: string;
+	language: string;
+	url: string;
+}
+
+export function formatTime(seconds: number): string {
+	if (!isFinite(seconds) || seconds < 0) return "0:00";
+	const h = Math.floor(seconds / 3600);
+	const m = Math.floor((seconds % 3600) / 60);
+	const s = Math.floor(seconds % 60);
+	if (h > 0)
+		return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+	return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+const RESOLUTION_ORDER: Record<string, number> = {
+	"4K": 4,
+	"2160p": 4,
+	"1080p": 3,
+	"720p": 2,
+	"480p": 1,
+};
+
+/** Unique resolutions among `streams`, best first. */
+export function sortResolutions(streams: { resolution?: string | null }[]): string[] {
+	const seen = new Set<string>();
+	const result: string[] = [];
+	for (const s of streams) {
+		const res = s.resolution;
+		if (res && !seen.has(res)) {
+			seen.add(res);
+			result.push(res);
+		}
+	}
+	return result.sort((a, b) => (RESOLUTION_ORDER[b] ?? 0) - (RESOLUTION_ORDER[a] ?? 0));
+}
