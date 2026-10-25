@@ -360,7 +360,9 @@
 		loadingStreams = true;
 		try {
 			streams = await api.streams.movie(item.tmdb_id);
-			if (streams.length > 0) play(streams[0]);
+			if (streams.length > 0) {
+				play(findStreamToPlay(streams));
+			}
 		} catch (e: any) {
 			error = e.message;
 		} finally {
@@ -373,12 +375,41 @@
 		loadingStreams = true;
 		try {
 			streams = await api.streams.tv(item.tmdb_id, season, episode);
-			if (streams.length > 0) play(streams[0]);
+			if (streams.length > 0) {
+				play(findStreamToPlay(streams));
+			}
 		} catch (e: any) {
 			error = e.message;
 		} finally {
 			loadingStreams = false;
 		}
+	}
+
+	function findStreamToPlay(streams: Stream[]): Stream {
+		return (
+			streams
+				.filter(
+					(
+						stream,
+					): stream is typeof stream & {
+						download: NonNullable<(typeof stream)["download"]>;
+					} => !!stream.download,
+				)
+				.sort((a, b) => {
+					const aStatus = a.download.status;
+					const bStatus = b.download.status;
+					if (aStatus === "Completed" && bStatus === "Completed") {
+						return 0;
+					} else if (aStatus === "Completed") {
+						return -1;
+					} else if (bStatus === "Completed") {
+						return 1;
+					} else {
+						return 0;
+					}
+				})
+				.at(0) ?? streams[0]
+		);
 	}
 
 	async function switchStream(stream: Stream) {
