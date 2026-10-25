@@ -1,10 +1,9 @@
 <script lang="ts">
-	import { onDestroy } from "svelte";
 	import { goto } from "$app/navigation";
 	import { Button, Icon } from "glow";
 	import { remote } from "$lib/remote.svelte";
 	import { downloadManager } from "$lib/downloads.svelte";
-	import PlayerControls from "$lib/components/PlayerControls.svelte";
+	import RemoteControls from "$lib/components/RemoteControls.svelte";
 	import StreamStatsPopover from "$lib/components/StreamStatsPopover.svelte";
 	import Spinner from "$lib/components/Spinner.svelte";
 
@@ -47,105 +46,6 @@
 		history.back();
 	}
 
-	// ── Touch gestures over the now-playing area ──
-	// A single tap anywhere toggles play/pause; double-tapping the left/right
-	// third seeks ∓10s, and keeping that side tapped accumulates the jump
-	// (10s, 20s, 30s…). The mobile equivalent of the in-player spacebar /
-	// arrow-key shortcuts. The single-tap action is deferred by one double-tap
-	// window so a follow-up tap can upgrade it into a seek instead of pausing.
-	const SEEK_STEP = 10;
-	const DOUBLE_TAP_MS = 300;
-	const STREAK_MS = 700;
-
-	let lastTapAt = 0;
-	let lastTapZone: "left" | "mid" | "right" | null = null;
-	let tapTimer: ReturnType<typeof setTimeout> | undefined;
-	let streakSide: "left" | "right" | null = null;
-	let streakTimer: ReturnType<typeof setTimeout> | undefined;
-	let seekAccum = 0;
-
-	let seekFlash = $state<{
-		dir: "left" | "right";
-		amount: number;
-		id: number;
-	} | null>(null);
-	let flashSeq = 0;
-	let flashTimer: ReturnType<typeof setTimeout> | undefined;
-
-	let playFlash = $state<{ playing: boolean; id: number } | null>(null);
-	let playFlashSeq = 0;
-	let playFlashTimer: ReturnType<typeof setTimeout> | undefined;
-
-	function togglePlayback() {
-		remote.send({ kind: "play_pause" });
-		// tv.paused is the state *before* the toggle; flash the resulting action.
-		playFlashSeq += 1;
-		playFlash = { playing: tv?.paused ?? true, id: playFlashSeq };
-		clearTimeout(playFlashTimer);
-		playFlashTimer = setTimeout(() => (playFlash = null), 600);
-	}
-
-	function addSeek(dir: "left" | "right") {
-		seekAccum += SEEK_STEP;
-		remote.send({
-			kind: "seek_by",
-			seconds: dir === "left" ? -SEEK_STEP : SEEK_STEP,
-		});
-		flashSeq += 1;
-		seekFlash = { dir, amount: seekAccum, id: flashSeq };
-		clearTimeout(flashTimer);
-		flashTimer = setTimeout(() => (seekFlash = null), 800);
-		navigator.vibrate?.(15);
-		// Keep tapping the same side to add another step without re-double-tapping.
-		streakSide = dir;
-		clearTimeout(streakTimer);
-		streakTimer = setTimeout(() => (streakSide = null), STREAK_MS);
-	}
-
-	function handleTap(e: PointerEvent) {
-		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		const x = (e.clientX - rect.left) / rect.width;
-		const zone: "left" | "mid" | "right" =
-			x < 0.3 ? "left" : x > 0.7 ? "right" : "mid";
-		const side = zone === "mid" ? null : zone;
-		const now = e.timeStamp;
-
-		// Continuing an active streak on the same side → add another step.
-		if (side && streakSide === side) {
-			clearTimeout(tapTimer);
-			addSeek(side);
-			lastTapAt = now;
-			lastTapZone = zone;
-			return;
-		}
-
-		// Second tap of a double-tap on a side → start a fresh seek streak.
-		if (side && lastTapZone === zone && now - lastTapAt < DOUBLE_TAP_MS) {
-			clearTimeout(tapTimer);
-			seekAccum = 0;
-			addSeek(side);
-			lastTapAt = 0;
-			lastTapZone = null;
-			return;
-		}
-
-		// Otherwise it's (so far) a single tap → defer play/pause so a follow-up
-		// tap can upgrade it into a double-tap seek.
-		streakSide = null;
-		clearTimeout(streakTimer);
-		clearTimeout(tapTimer);
-		tapTimer = setTimeout(togglePlayback, DOUBLE_TAP_MS);
-		lastTapAt = now;
-		lastTapZone = zone;
-	}
-
-	onDestroy(() => {
-		clearTimeout(tapTimer);
-		clearTimeout(streakTimer);
-		clearTimeout(flashTimer);
-		clearTimeout(playFlashTimer);
-	});
-
 	// Bounce out if we somehow land here without an active remote session.
 	$effect(() => {
 		if (remote.mode !== "remote") goto("/");
@@ -185,11 +85,10 @@
 			Casting to {remote.pairedPeer?.label ?? "TV"}
 		</span>
 		<StreamStatsPopover streamStats={tv?.streamStats} />
-		<Button variant="ghost" icon="Square" onclick={stop} tooltip="Stop" />
+		<Button variant="ghost" icon="X" onclick={stop} tooltip="Stop" />
 	</div>
 
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="body" onpointerup={handleTap}>
+	<div class="body">
 		<div class="now">
 			{#if tv?.titleImage}
 				<img class="now-logo" src={tv.titleImage} alt={tv?.title ?? ""} />
@@ -210,35 +109,16 @@
 			{/if}
 		</div>
 
-		{#if seekFlash}
-			{#key seekFlash.id}
-				<div class="seek-flash {seekFlash.dir}">
-					<Icon
-						name={seekFlash.dir === "left" ? "Rewind" : "FastForward"}
-						size={26}
-					/>
-					<span>{seekFlash.amount}s</span>
-				</div>
-			{/key}
-		{/if}
-
-		{#if playFlash}
-			{#key playFlash.id}
-				<div class="play-flash">
-					<Icon name={playFlash.playing ? "Play" : "Pause"} size={40} fill />
-				</div>
-			{/key}
-		{/if}
-	</div>
-
-	<div class="controls">
-		<PlayerControls
+		<RemoteControls
+			paused={tv?.paused ?? true}
+			loading={tv?.loading ?? false}
 			currentTime={tv?.currentTime ?? 0}
 			duration={tv?.duration ?? 0}
 			buffered={tv?.buffered ?? 0}
-			paused={tv?.paused ?? true}
 			volume={tv?.volume ?? 1}
 			muted={tv?.muted ?? false}
+			pieceMap={tv?.pieceMap ?? []}
+			streamStats={tv?.streamStats ?? null}
 			streams={tv?.streams ?? []}
 			activeStreamHash={tv?.activeStreamHash}
 			audioTracks={tv?.audioTracks ?? []}
@@ -249,14 +129,10 @@
 			transcoding={tv?.transcoding ?? { enabled: false, onlyAudio: false }}
 			{hasAudioPretranscoding}
 			{hasFullPretranscoding}
-			streamStats={tv?.streamStats ?? null}
-			pieceMap={tv?.pieceMap ?? []}
-			volumeAlwaysOpen
-			loading={tv?.loading ?? false}
 			onTogglePlay={() => remote.send({ kind: "play_pause" })}
-			onSeek={(t) => remote.send({ kind: "seek", seconds: t })}
-			onSetVolume={(v) => remote.send({ kind: "volume", volume: v })}
-			onToggleMute={() => remote.send({ kind: "mute" })}
+			onSeekBy={(seconds) => remote.send({ kind: "seek_by", seconds })}
+			onSeek={(seconds) => remote.send({ kind: "seek", seconds })}
+			onSetVolume={(volume) => remote.send({ kind: "volume", volume })}
 			onToggleFullscreen={() => remote.send({ kind: "fullscreen" })}
 			onStreamSelect={(s) =>
 				remote.send({ kind: "select_stream", hash: s.info_hash })}
@@ -306,8 +182,7 @@
 	}
 
 	.bar,
-	.body,
-	.controls {
+	.body {
 		position: relative;
 		z-index: 1;
 	}
@@ -334,91 +209,17 @@
 		flex: 1;
 		display: flex;
 		flex-direction: column;
-		padding: 1.5rem;
+		padding: 1.5rem 1.5rem 0;
 		min-height: 0;
-		// Gesture surface: disable double-tap zoom and tap highlight so seeking
-		// feels native.
-		touch-action: manipulation;
-		user-select: none;
-		-webkit-user-select: none;
-		-webkit-tap-highlight-color: transparent;
-		cursor: pointer;
-	}
-
-	.seek-flash {
-		position: absolute;
-		top: 50%;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.25rem;
-		font-size: 0.85rem;
-		font-weight: 600;
-		pointer-events: none;
-		animation: seek-pop 600ms ease-out forwards;
-	}
-
-	.seek-flash.left {
-		left: 12%;
-	}
-
-	.seek-flash.right {
-		right: 12%;
-	}
-
-	@keyframes seek-pop {
-		0% {
-			opacity: 0;
-			transform: translateY(-50%) scale(0.8);
-		}
-		25% {
-			opacity: 1;
-			transform: translateY(-50%) scale(1);
-		}
-		100% {
-			opacity: 0;
-			transform: translateY(-50%) scale(1);
-		}
-	}
-
-	.play-flash {
-		position: absolute;
-		top: 50%;
-		left: 50%;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 5rem;
-		height: 5rem;
-		border-radius: 50%;
-		background: rgba(0, 0, 0, 0.45);
-		pointer-events: none;
-		animation: play-pop 600ms ease-out forwards;
-	}
-
-	@keyframes play-pop {
-		0% {
-			opacity: 0;
-			transform: translate(-50%, -50%) scale(0.7);
-		}
-		25% {
-			opacity: 1;
-			transform: translate(-50%, -50%) scale(1);
-		}
-		100% {
-			opacity: 0;
-			transform: translate(-50%, -50%) scale(1.15);
-		}
 	}
 
 	.now {
-		flex: 1;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		justify-content: center;
 		gap: 0.5rem;
 		text-align: center;
+		flex-shrink: 0;
 	}
 
 	.now-logo {
@@ -450,10 +251,6 @@
 		font-family: "JetBrains Mono", monospace;
 		white-space: nowrap;
 		opacity: 0.5;
-	}
-
-	.controls {
-		padding-bottom: env(safe-area-inset-bottom);
 	}
 
 	.offset {
